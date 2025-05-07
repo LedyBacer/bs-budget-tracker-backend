@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: budget_backend_app
+    command: poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # --reload для разработки
+    volumes:
+      - ./app:/app/app # Синхронизация кода для разработки
+    ports:
+      - "8008:8000" # Маппим порт 8000 контейнера на порт 8008 хоста (можно выбрать другой)
+    env_file:
+      - .env # Передаем переменные окружения из .env файла
+    depends_on:
+      db:
+        condition: service_healthy # Ждем, пока база данных будет готова
+    networks:
+      - budgetnet
+
+  db:
+    image: postgres:17-alpine # Используем официальный образ PostgreSQL
+    container_name: budget_postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/ # Сохраняем данные БД между перезапусками
+    expose: # Не публикуем порт наружу, доступ только внутри сети Docker
+      - "5432"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER} # Берем из .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # Берем из .env
+      POSTGRES_DB: ${POSTGRES_DB} # Берем из .env
+    healthcheck: # Проверка состояния сервиса БД
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - budgetnet
+
+volumes:
+  postgres_data: # Именованный том для данных PostgreSQL
+
+networks:
+  budgetnet:
+    driver: bridge
