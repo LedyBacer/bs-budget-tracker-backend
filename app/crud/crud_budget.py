@@ -94,10 +94,13 @@ async def get_budgets_by_owner(
         .outerjoin(transaction_sums_subquery, BudgetModel.id == transaction_sums_subquery.c.budget_id)
     )
 
-    if owner_user_id:
-        stmt = stmt.filter(BudgetModel.owner_user_id == owner_user_id)
-    elif owner_chat_id:
+    # Если указан owner_chat_id, то приоритет отдаем ему (групповой контекст)
+    if owner_chat_id:
         stmt = stmt.filter(BudgetModel.owner_chat_id == owner_chat_id)
+    elif owner_user_id:
+        # В личном контексте показываем только бюджеты, где owner_chat_id is NULL
+        stmt = stmt.filter(BudgetModel.owner_user_id == owner_user_id, BudgetModel.owner_chat_id.is_(None))
+    
     stmt = stmt.order_by(BudgetModel.created_at.desc()).offset(skip).limit(limit)
     
     result = await db.execute(stmt)
@@ -124,14 +127,18 @@ async def create_budget_with_owner(
     owner_user_id: Optional[int] = None,
     owner_chat_id: Optional[int] = None
 ) -> BudgetModel:
-    if not (owner_user_id is None) ^ (owner_chat_id is None):
-         raise ValueError("Either owner_user_id or owner_chat_id must be provided, but not both, and one must be not None.")
+    if owner_user_id is None and owner_chat_id is None:
+        raise ValueError("At least one of owner_user_id or owner_chat_id must be provided.")
+    
+    # Определяем владельца бюджета. В групповом чате (где есть оба ID) владельцем является чат
+    effective_owner_user_id = None if owner_chat_id else owner_user_id
+    effective_owner_chat_id = owner_chat_id
 
     db_obj = BudgetModel(
         name=obj_in.name,
         total_amount=obj_in.total_amount,
-        owner_user_id=owner_user_id,
-        owner_chat_id=owner_chat_id
+        owner_user_id=effective_owner_user_id,
+        owner_chat_id=effective_owner_chat_id
     )
     db.add(db_obj)
 

@@ -98,12 +98,15 @@ async def read_budget(
     if not budget:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
 
-    # Проверка авторизации: принадлежит ли найденный бюджет текущему пользователю или чату
-    if not (
-        (auth_context.owner_user_id and budget.owner_user_id == auth_context.owner_user_id) or
-        (auth_context.owner_chat_id and budget.owner_chat_id == auth_context.owner_chat_id)
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+    # Проверка авторизации с учетом новой логики
+    if auth_context.owner_chat_id:
+        # В групповом контексте - проверяем соответствие chat_id
+        if budget.owner_chat_id != auth_context.owner_chat_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+    else:
+        # В личном контексте - проверяем, что бюджет не привязан к группе и принадлежит пользователю
+        if budget.owner_chat_id is not None or budget.owner_user_id != auth_context.owner_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
     # budget уже содержит вычисленные поля total_expense, total_income, balance
     return budget
@@ -129,21 +132,20 @@ async def update_budget(
         if not db_budget:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
 
-        # Проверка авторизации
-        if not (
-            (auth_context.owner_user_id and db_budget.owner_user_id == auth_context.owner_user_id) or
-            (auth_context.owner_chat_id and db_budget.owner_chat_id == auth_context.owner_chat_id)
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        # Проверка авторизации с учетом новой логики
+        if auth_context.owner_chat_id:
+            # В групповом контексте - проверяем соответствие chat_id
+            if db_budget.owner_chat_id != auth_context.owner_chat_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        else:
+            # В личном контексте - проверяем, что бюджет не привязан к группе и принадлежит пользователю
+            if db_budget.owner_chat_id is not None or db_budget.owner_user_id != auth_context.owner_user_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
         # Выполняем обновление
         updated_budget = await crud.crud_budget.update_budget(db=db, db_obj=db_budget, obj_in=budget_in)
         
         # Перезагружаем бюджет с обновленными суммами для корректного ответа
-        # Это немного избыточно, т.к. update_budget сам возвращает объект,
-        # но get_budget гарантирует пересчет баланса, если total_amount изменился.
-        # Альтернатива: передать обновленные поля в get_budget или сделать пересчет в update_budget.
-        # Пока оставим так для надежности.
         refreshed_budget = await crud.crud_budget.get_budget(db=db, budget_id=updated_budget.id)
         if not refreshed_budget: # На всякий случай
              raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not retrieve updated budget")
@@ -179,12 +181,15 @@ async def delete_budget(
         if not db_budget:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
 
-        # Проверка авторизации
-        if not (
-            (auth_context.owner_user_id and db_budget.owner_user_id == auth_context.owner_user_id) or
-            (auth_context.owner_chat_id and db_budget.owner_chat_id == auth_context.owner_chat_id)
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        # Проверка авторизации с учетом новой логики
+        if auth_context.owner_chat_id:
+            # В групповом контексте - проверяем соответствие chat_id
+            if db_budget.owner_chat_id != auth_context.owner_chat_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        else:
+            # В личном контексте - проверяем, что бюджет не привязан к группе и принадлежит пользователю
+            if db_budget.owner_chat_id is not None or db_budget.owner_user_id != auth_context.owner_user_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
         # Выполняем удаление
         deleted_budget = await crud.crud_budget.remove_budget(db=db, budget_id=budget_id)

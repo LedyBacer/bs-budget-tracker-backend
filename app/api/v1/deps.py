@@ -25,10 +25,12 @@ class AuthContext:
 
     @property
     def owner_user_id(self) -> Optional[int]:
-        return self.user.id if not self.is_group_context else None
+        # Всегда возвращаем ID пользователя, независимо от контекста
+        return self.user.id
 
     @property
     def owner_chat_id(self) -> Optional[int]:
+        # Возвращаем chat_id только для группового чата
         return self.chat_id if self.is_group_context else None
 
 
@@ -93,12 +95,18 @@ async def get_auth_context(
     chat_title: Optional[str] = None
     chat_instance: Optional[str] = validated_data.get("chat_instance") # ID инстанса чата (уникален для пары юзер-чат)
 
+    # Определяем тип контекста на основе chat_type или chat_instance
+    if validated_data.get("chat_type") == "group" or (chat_instance and validated_data.get("chat_type") == "group"):
+        chat_type = "group"
+    
+    # Если есть явные данные о чате, используем их
     chat_data = validated_data.get("chat")
     if chat_data and isinstance(chat_data, dict) and "id" in chat_data and chat_data.get("type") in ["group", "supergroup"]:
         # Это групповой чат
         chat_id = int(chat_data["id"])
         chat_type = chat_data.get("type")
         chat_title = chat_data.get("title")
+        
         # Убеждаемся, что запись о чате есть в БД (название могло обновиться)
         try:
             await crud.crud_chat.get_or_create_or_update_chat_from_telegram(
@@ -111,18 +119,35 @@ async def get_auth_context(
         except Exception as e:
              print(f"Auth warning: Error processing group chat in DB: {e}")
              # Не фатально для аутентификации, но нужно залогировать
-             # Можно решить не падать, а просто продолжить с ID и типом
              pass
-
     else:
-        # Предполагаем личный контекст (чат с ботом или нет информации о чате)
-        # В этом случае chat_id остается None, chat_type можно установить в "private" или оставить None
-        chat_type = validated_data.get("chat_type") # Иногда Telegram передает chat_type="private"
-        if not chat_type:
-            # Если chat_type не передан, можем попробовать определить по receiver
-            receiver_data = validated_data.get("receiver")
-            if receiver_data and isinstance(receiver_data, dict) and receiver_data.get("id") == settings.TELEGRAM_BOT_ID: # Нужно добавить TELEGRAM_BOT_ID в настройки!
-                 chat_type = "private"
+        # Если есть chat_instance и chat_type="group", но нет явных данных о чате,
+        # значит мы в групповом чате, но нужно получить его ID
+        if chat_instance and validated_data.get("chat_type") == "group":
+            # Для групповых чатов используем chat_instance в качестве идентификатора
+            # Можно также сделать запрос к БД, чтобы найти чат по chat_instance, если это поле сохраняется
+            chat_type = "group"
+            
+            # Для первой версии можно использовать хеш от chat_instance как chat_id
+            # В будущем лучше добавить поле chat_instance в модель чата и искать по нему
+            import hashlib
+            hash_object = hashlib.md5(chat_instance.encode())
+            chat_id = int(hash_object.hexdigest(), 16) % (10 ** 10)  # Берем остаток от деления на 10^10 для получения 10-значного числа
+            
+            try:
+                await crud.crud_chat.get_or_create_or_update_chat_from_telegram(
+                    db=db,
+                    chat_id=chat_id,
+                    chat_type="group",
+                    chat_title=f"Group Chat {chat_id}",  # Временное название
+                    update_if_exists=False  # Не обновляем существующие записи
+                )
+            except Exception as e:
+                print(f"Auth warning: Error processing inferred group chat in DB: {e}")
+                pass
+        else:
+            # Предполагаем личный контекст (чат с ботом или нет информации о чате)
+            chat_type = validated_data.get("chat_type") or "private"
 
     # Возвращаем объект контекста
     return AuthContext(
