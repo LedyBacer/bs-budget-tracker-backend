@@ -16,6 +16,7 @@ services:
         condition: service_healthy # Ждем, пока база данных будет готова
     networks:
       - budgetnet
+    restart: unless-stopped
 
   db:
     image: postgres:17-alpine # Используем официальный образ PostgreSQL
@@ -24,8 +25,8 @@ services:
       - postgres_data:/var/lib/postgresql/data/ # Сохраняем данные БД между перезапусками
     expose: # Не публикуем порт наружу, доступ только внутри сети Docker
       - "5432"
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER} # Берем из .env
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # Берем из .env
@@ -37,6 +38,7 @@ services:
       retries: 5
     networks:
       - budgetnet
+    restart: unless-stopped
 
 volumes:
   postgres_data: # Именованный том для данных PostgreSQL
