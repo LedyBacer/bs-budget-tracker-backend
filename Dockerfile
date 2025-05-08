@@ -21,16 +21,15 @@ RUN poetry config virtualenvs.in-project true && \
 
 # Копируем остальной код приложения
 COPY ./app /app/app
+COPY ./alembic /app/alembic
+COPY ./alembic.ini /app/alembic.ini
 
-# Команда для запуска приложения
-# Используем .venv/bin/python для запуска из виртуального окружения Poetry
-# CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-# Для продакшена --reload лучше убрать. Для разработки он полезен.
-# Порт 8000 будет использоваться внутри контейнера.
+# Создаем скрипт entrypoint.sh
+COPY ./entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Команда для запуска приложения через entrypoint скрипт
 EXPOSE 8000
 
-# Запускаем uvicorn через poetry run, чтобы он использовал виртуальное окружение
-# --host 0.0.0.0 делает сервер доступным снаружи контейнера
-# --reload полезен для разработки, чтобы сервер перезапускался при изменениях кода.
-# Для продакшена --reload лучше убрать и, возможно, использовать больше воркеров.
-CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Запускаем entrypoint скрипт вместо прямого запуска uvicorn
+ENTRYPOINT ["/app/entrypoint.sh"]
