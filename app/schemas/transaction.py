@@ -1,6 +1,6 @@
 # app/schemas/transaction.py
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 import uuid
 from app.db.models.transaction import TransactionType
@@ -51,3 +51,7 @@ class Transaction(TransactionInDBBase):
 class TransactionListResponse(BaseModel):
     transactions: List[Transaction] # Список транзакций по схеме Transaction
     total_count: int              # Общее количество транзакций, соответствующее фильтрам
+
+class DateTransactionSummary(BaseModel):
+    """Схема для ответа с суммами транзакций по датам"""
+    summaries: Dict[str, float]  # Ключи - даты в формате YYYY-MM-DD, значения - суммы

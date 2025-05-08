@@ -1,9 +1,9 @@
 # app/api/v1/endpoints/transactions.py
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Path # Добавили Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict, Literal
 import uuid
-from datetime import date # Для фильтрации по дате
+from datetime import date, datetime, timedelta # Для фильтрации по дате
 
 from app import schemas # Это работает, т.к. есть app/schemas/__init__.py
 from app import crud    # Это работает, т.к. есть app/crud/__init__.py
@@ -303,3 +303,53 @@ async def delete_transaction(
     except Exception as e:
         print(f"Error deleting transaction {transaction_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not delete transaction")
+
+# --- Новая схема для ответа с суммами транзакций по дате ---
+@router.get(
+    "/budgets/{budget_id}/transactions/date-summary/",
+    response_model=schemas.DateTransactionSummary,
+    description="Получить суммы транзакций по датам с фильтрацией по типу и диапазону дат"
+)
+async def get_transactions_date_summary(
+    *,
+    budget: models.Budget = Depends(get_budget_for_transaction_operations),
+    db: AsyncSession = Depends(deps.get_async_db),
+    start_date: date = Query(..., description="Начальная дата диапазона (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Конечная дата диапазона (YYYY-MM-DD), если не указана - равна start_date"),
+    transaction_type: Literal["expense", "income", "all"] = Query("all", description="Тип транзакций для расчета: expense (списания), income (начисления) или all (общая сумма)")
+):
+    """
+    Получить суммы транзакций по датам для указанного бюджета.
+    Возвращает суммы транзакций за указанный диапазон дат.
+    Можно выбрать тип транзакций для расчета: expense, income или all.
+    Возвращает словарь, где ключи - даты в формате YYYY-MM-DD, значения - суммы транзакций.
+    """
+    try:
+        # Если end_date не указана, используем start_date
+        if end_date is None:
+            end_date = start_date
+            
+        # Проверка правильности диапазона дат
+        if end_date < start_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_date cannot be earlier than start_date"
+            )
+        
+        # Вызываем CRUD функцию для получения сумм транзакций
+        date_summaries = await crud.crud_transaction.get_transaction_date_summaries(
+            db=db,
+            budget_id=budget.id,
+            start_date=start_date,
+            end_date=end_date,
+            transaction_type=transaction_type if transaction_type != "all" else None
+        )
+        
+        return schemas.DateTransactionSummary(summaries=date_summaries)
+        
+    except Exception as e:
+        print(f"Error calculating transaction summaries for budget {budget.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Could not calculate transaction summaries: {str(e)}"
+        )

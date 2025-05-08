@@ -133,6 +133,7 @@ async def create_category(
         budget_id=budget_id
     )
     db.add(db_obj)
+    await db.flush()  # Генерируем ID и временные метки
     # Устанавливаем начальные значения для полей, ожидаемых схемой Category
     db_obj.spent = 0.0
     db_obj.income = 0.0

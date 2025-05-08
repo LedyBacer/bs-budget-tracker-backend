@@ -8,5 +8,6 @@ from .transaction import ( # Импортируем все нужное для �
     TransactionCreate,
     TransactionUpdate,
     TransactionAuthorInfo,
-    TransactionListResponse # <--- ДОБАВЛЕНО
+    TransactionListResponse, # <--- ДОБАВЛЕНО
+    DateTransactionSummary # <--- ДОБАВЛЕНО
 )

@@ -145,8 +145,16 @@ async def get_transactions_by_budget(
     if conditions:
         query = query.filter(and_(*conditions)) # Применяем все условия через AND
 
-    # Сначала получаем общее количество транзакций по фильтрам
-    count_query = select(func.count(TransactionModel.id)).select_from(query.subquery()) # Считаем от отфильтрованного запроса
+    # Создаем отдельный запрос для подсчета количества транзакций
+    # Используем DISTINCT для предотвращения дублирования из-за джойнов
+    count_query = select(func.count(func.distinct(TransactionModel.id))).where(
+        TransactionModel.budget_id == budget_id
+    )
+    
+    # Применяем те же фильтры к запросу подсчета
+    if conditions:
+        count_query = count_query.where(and_(*conditions))
+    
     total_count_res = await db.execute(count_query)
     total_count = total_count_res.scalar_one()
 
@@ -228,11 +236,22 @@ async def update_transaction(
         # Если не менялись ключевые поля, просто обновляем updated_at (автоматически) и возвращаем
         db.add(db_obj)
         await db.flush()
+        # Явно получаем обновленное значение updated_at
+        updated_at_result = await db.execute(
+            select(TransactionModel.updated_at).filter(TransactionModel.id == db_obj.id)
+        )
+        db_obj.updated_at = updated_at_result.scalar_one()
         await db.refresh(db_obj, attribute_names=['author_user', 'category'])
         return db_obj
 
     db.add(db_obj)
     await db.flush() # Сохраняем изменения транзакции в БД перед пересчетом
+    
+    # Явно получаем обновленное значение updated_at
+    updated_at_result = await db.execute(
+        select(TransactionModel.updated_at).filter(TransactionModel.id == db_obj.id)
+    )
+    db_obj.updated_at = updated_at_result.scalar_one()
 
     # Пересчитываем суммы
     # Нужно пересчитать для старой категории И для новой, если она изменилась
@@ -281,3 +300,76 @@ async def remove_transaction(db: AsyncSession, *, transaction_id: uuid.UUID) -> 
     await _update_budget_category_sums(db, budget_id=budget_id_to_update, category_id=category_id_to_update)
 
     return db_obj # Возвращаем удаленный объект (уже без связей после коммита)
+
+# --- Aggregation Operations ---
+
+async def get_transaction_date_summaries(
+    db: AsyncSession,
+    *,
+    budget_id: uuid.UUID,
+    start_date: date,
+    end_date: date = None,  # Сделаем end_date опциональным
+    transaction_type: Optional[str] = None
+) -> Dict[str, float]:
+    """
+    Получает суммы транзакций по датам для указанного бюджета и даты.
+    Использует SQL агрегацию для оптимизации производительности.
+    
+    Args:
+        db: Асинхронная сессия БД
+        budget_id: ID бюджета
+        start_date: Дата для фильтрации
+        end_date: Конечная дата, если нужен диапазон (по умолчанию равна start_date)
+        transaction_type: Тип транзакций для фильтрации ('expense', 'income', или None для всех)
+        
+    Returns:
+        Словарь, где ключи - даты в формате YYYY-MM-DD, значения - суммы транзакций
+    """
+    # Если end_date не указан, используем start_date
+    if end_date is None:
+        end_date = start_date
+    
+    # Преобразуем даты в datetime с временем начала и конца дня
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.max.time())
+    
+    try:
+        # Исправляем SQL-запрос, используя формат даты как самостоятельное выражение
+        date_format = func.to_char(TransactionModel.transaction_date, 'YYYY-MM-DD').label('date_key')
+        
+        query = (
+            select(
+                date_format,
+                func.sum(TransactionModel.amount).label('total_amount')
+            )
+            .filter(
+                TransactionModel.budget_id == budget_id,
+                TransactionModel.transaction_date >= start_dt,
+                TransactionModel.transaction_date <= end_dt
+            )
+            .group_by(date_format)  # Используем готовый label
+        )
+        
+        # Добавляем фильтр по типу транзакции, если он указан
+        if transaction_type and transaction_type != 'all':
+            try:
+                query = query.filter(TransactionModel.type == TransactionType(transaction_type))
+            except ValueError:
+                # В случае недопустимого значения типа, игнорируем фильтр
+                pass
+        
+        # Выполняем запрос
+        result = await db.execute(query)
+        rows = result.all()
+        
+        # Преобразуем результат в словарь
+        date_summaries: Dict[str, float] = {
+            row.date_key: float(row.total_amount) 
+            for row in rows
+        }
+        
+        return date_summaries
+    except Exception as e:
+        # Добавляем логирование для отладки
+        print(f"SQL Error in get_transaction_date_summaries: {e}")
+        raise
